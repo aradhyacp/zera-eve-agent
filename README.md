@@ -15,19 +15,8 @@
 [![Postgres](https://img.shields.io/badge/Postgres-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 [![Gemini](https://img.shields.io/badge/Gemini_3.5-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)](https://ai.google.dev/)
-
-<br/>
-
-![Node](https://img.shields.io/badge/node-24.x-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)
-![Zod](https://img.shields.io/badge/zod-4.5.4-3E67B1?style=flat-square&logo=zod&logoColor=white)
-![AI SDK](https://img.shields.io/badge/AI_SDK-7-000000?style=flat-square)
-![Guard tests](https://img.shields.io/badge/guard_tests-40%2F40-success?style=flat-square)
-![Approval](https://img.shields.io/badge/writes-human_approved-orange?style=flat-square)
-![Status](https://img.shields.io/badge/status-learning_project-blue?style=flat-square)
-
 </div>
 
----
 
 ## 💡 Where this came from
 
