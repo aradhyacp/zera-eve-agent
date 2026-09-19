@@ -2,9 +2,11 @@
 
 # 🧵 Zera
 
+**An AI agent built with [eve](https://eve.dev) — tool calling, a layered validation pipeline, and human-in-the-loop approval on anything that writes.**
+
 ### An AI data analyst for a textile business — that can't drop your tables.
 
-*A small, opinionated take on the "an agent on every desk" idea: natural language in, validated SQL out, with a human standing between the model and anything destructive.*
+*Ask in plain English. The agent drafts SQL, a deterministic guard validates it, Postgres runs it read-only — and the moment it wants to change your data, the run pauses and waits for you to say yes.*
 
 <br/>
 
@@ -29,7 +31,9 @@
 
 ## 💡 Where this came from
 
-This project follows the shape of a talk by **Andrew Qu** (Chief of Software, Vercel) at the **AI Engineer World's Fair**, on how Vercel built a data science agent for their internal teams.
+This project follows the shape of a talk by **Andrew Qu** (Chief of Software, Vercel) at the **AI Engineer World's Fair**, on how Vercel built a data science agent for their internal teams — and on eve, the framework that came out of it.
+
+[![Watch the talk](https://img.shields.io/badge/▶_Watch_the_talk-How_we_Solved_Agent_Building-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=9dYcwOkpCE8)
 
 > "At Vercel I've built a successful AI data scientist, that has taken the load off of our data team from answering ad-hoc data queries, and fields over 1,200 unique queries a day from just internal Vercelians. I've been building and iterating on it since last september, and it's gone through over 6 different rewrites, the newest one of which has inspired us to build a new agent framework […]"
 >
@@ -46,32 +50,67 @@ The arc he describes is the interesting part: **just prompting → bespoke tooli
 
 ## 🎯 What it does
 
-Ask in plain English. Get a validated query, real rows, and a formatted answer.
+Ask in plain English. Watch every layer do its job. Here is a **real session** — `eve v0.58.1`, unedited apart from trimming the tool argument previews.
 
+### 📊 A read: question → SQL → rows → report
+
+```console
+│ do we have any customers from LA ? if yes then have then done any buisness with us
+│ ? if yes what have they bought and whats the total amount of that product sales in LA ?
+
+  ▪ queryGenerator    intent="Find total amount of each produ…"  query="SELECT c.name A…"
+   → draftQuery="SELECT c.name AS customer…"  ready=true
+  ▪ queryValidator    query="SELECT c.name AS customer_name,…"  source="generated"
+   → verdict="allow"  malicious=false  operation="read"
+  ▪ queryDatabase     query="SELECT c.name AS customer_name,…"
+   → status="ok"  rowCount=4
+  ▪ outputFormatter   title="Products and Total Quantities S…"  rows=[4]
+   → formatted="### Products and Total Quantiti…"
+
+▲ Products and Total Quantities Sold to Los Angeles Customers
+
+  Yes, we have a customer in Los Angeles (Karen Scott) who has made multiple
+  purchases, totaling several thousand units across cotton poplin, flannel pillow
+  covers, french terry fleece, and linen blend fabric.
+
+  ┌───────────────┬─────────────┬─────────────────────────────────┬──────────────┐
+  │ Customer Name │ City        │ Product                         │ Total Amount │
+  ├───────────────┼─────────────┼─────────────────────────────────┼──────────────┤
+  │ Karen Scott   │ Los Angeles │ Cotton Poplin Shirting (meters) │        8,672 │
+  │ Karen Scott   │ Los Angeles │ Linen Blend Fabric (meters)     │        2,468 │
+  │ Karen Scott   │ Los Angeles │ French Terry Fleece (meters)    │        1,717 │
+  │ Karen Scott   │ Los Angeles │ Flannel Pillow Covers (pieces)  │          958 │
+  └───────────────┴─────────────┴─────────────────────────────────┴──────────────┘
 ```
-You  ▸  who are our biggest customers by volume this year?
 
-Zera ▸  ### Top customers by units shipped
+One vague question, four tools, in order. Notice the agent never touched the database directly — `queryGenerator` drafted, `queryValidator` cleared it, and only then did `queryDatabase` run it.
 
-        Mark Harris leads on volume, driven by Tech Wear orders out of El Paso.
+### 🔐 A write: the run stops and waits for a human
 
-        | Customer        | City      | Industry      | Amount |
-        | :-------------- | :-------- | :------------ | -----: |
-        | Mark Harris     | El Paso   | Tech Wear     | 48,344 |
-        | Susan Anderson  | El Paso   | Home Textiles | 36,969 |
-        | Betty Allen     | Atlanta   | Knitwear      | 32,814 |
+Same session, follow-up message:
 
-        **Amount total:** 118,127 units
+```console
+│ can you update the Flannel Pillow Covers purshase of karen scott from 958 to 334
+
+  ▪ queryGenerator       intent="Update the amount of Flannel Pi…"  query="UPDATE sales SE…"
+   → draftQuery="UPDATE sales SET amount =…"
+  ▪ queryValidator       query="UPDATE sales SET amount = 334 W…"  source="generated"
+   → verdict="allow"  malicious=false  operation="write"      ← flagged as a write
+  ? customQueryExecutor  query="UPDATE sales SET amount = 334 W…"  reason="Update Kar…"
+                         ⏸  run parked — waiting for your decision
+  ▪ outputFormatter      title="Update Sale Amount"  rows=[0]  insight="Updated Karen Scot…"
+
+▲ Update Sale Amount
+
+  Updated Karen Scott's Flannel Pillow Covers purchase quantity from 958 to 334.
+
+  ✅ Applied. 1 row was changed after your approval.
 ```
 
-And when you ask for something it shouldn't do on its own:
+The `?` marker is the whole point: the validator classified the statement as `operation="write"`, so it was routed to the **privileged** executor, which **suspended the run** rather than executing. Nothing changed until a human approved it.
 
-```
-You  ▸  delete all sales before 2024
-
-Zera ▸  I can't delete data — DELETE is permanently blocked for me.
-        I can show you which rows match, or flag them instead. Want either?
-```
+> [!TIP]
+> The pause is durable, not a blocking `await`. eve parks the turn at `session.waiting` and the process can restart while it waits — seconds or days — then resume exactly where it left off.
 
 ---
 
@@ -129,36 +168,13 @@ The interesting design decision: **tool ordering is a convention, not the securi
 
 The SQL guard (`agent/lib/sqlGuard.ts`) re-runs *inside* both executors. If the model skips the validator, or calls an executor directly, the query is still analyzed from scratch. Ordering makes the agent well-behaved; the guard makes it safe.
 
-<table>
-<tr><th align="left">⛔ Rejected outright</th><th align="left">🧪 Also caught</th></tr>
-<tr valign="top"><td>
-
-`DELETE` · `DROP` · `TRUNCATE`
-`ALTER` · `CREATE` · `GRANT`
-`REVOKE` · `COPY` · `VACUUM`
-
-</td><td>
-
-Stacked statements (`;`)
-`--` and `/* */` comments
-Dollar quoting · backslash escapes
-`OR 1=1` tautologies
-
-</td></tr>
-<tr valign="top"><td>
-
-`pg_catalog` · `information_schema`
-`pg_sleep` · `pg_read_file` · `dblink`
-Functions outside an allowlist
-
-</td><td>
-
-Tables/columns not in the schema
-Writes hidden inside a read CTE
-`UPDATE` with no `WHERE`
-
-</td></tr>
-</table>
+| | Category | Rejected |
+|:-:|:---|:---|
+| 🗑️ | **Destructive statements** | `DELETE` · `DROP` · `TRUNCATE` · `ALTER` · `CREATE` · `GRANT` · `REVOKE` · `COPY` · `VACUUM` |
+| 💉 | **Injection carriers** | Stacked statements (`;`) · `--` and `/* */` comments · dollar quoting · backslash escapes · `OR 1=1` tautologies |
+| 🔑 | **System & host access** | `pg_catalog` · `information_schema` · `pg_sleep` · `pg_read_file` · `dblink` · any function outside the allowlist |
+| 📋 | **Schema violations** | Tables or columns not in the schema · stale column names · unknown identifiers |
+| 💥 | **Mass mutation** | `UPDATE` with no `WHERE` · writes hidden inside a read CTE |
 
 **Defence in depth, in layers:**
 
@@ -171,8 +187,52 @@ Writes hidden inside a read CTE
 | 🔒 Postgres | Reads run in `SET TRANSACTION READ ONLY` — a guard miss still cannot write. |
 | ⏱️ Limits | 15s statement timeout · 500 row cap · writes roll back on error. |
 
+---
+
+## 🙋 Human in the loop
+
+Writes are not something the agent is trusted to decide alone. `customQueryExecutor` is the **only** path to an `INSERT` or `UPDATE`, and it is gated on a real person.
+
+### How it's wired
+
+eve supports this natively: a tool declares an `approval` policy, and returning `"user-approval"` **durably suspends the run** until someone answers. Rather than a blanket `always()`, Zera uses an input-dependent policy:
+
+```ts
+// agent/tools/customQueryExecutor.ts
+approval: ({ session, toolInput }) => {
+  const result = validateQuery(toolInput?.query);
+
+  // Unsafe or unvalidated queries are denied outright — the human never sees them.
+  if (result.verdict === "reject") {
+    return { type: "denied", reason: result.malicious
+      ? `Blocked as unsafe: ${result.errors.join(" ")}`
+      : `Failed validation: ${result.errors.join(" ")}` };
+  }
+  if (!wasValidated(session.id, result.normalizedQuery)) {
+    return { type: "denied", reason: "This query has not been through queryValidator." };
+  }
+
+  return "user-approval";   // ⏸ park the run and ask a person
+},
+```
+
+### Why deny *before* prompting
+
+An approval dialog you click through a hundred times is worse than no approval at all. Every automated check runs **first**, so anything unsafe is rejected without ever reaching you.
+
 > [!IMPORTANT]
-> The approval policy denies before it prompts. You are only ever asked to approve a query that already passed every automated check — which keeps the prompt meaningful instead of something you learn to click through.
+> By the time a prompt appears, the query is already known to be safe, schema-valid and validator-approved. What's left is the only question a machine can't answer: *do you actually want this data changed?*
+
+### What's gated
+
+| Tool | Approval | Why |
+|:--|:-:|:--|
+| `queryGenerator` | ❌ | Produces text, touches nothing. |
+| `queryValidator` | ❌ | Read-only analysis. |
+| `queryDatabase` | ❌ | `READ ONLY` transaction — cannot write by construction. |
+| **`customQueryExecutor`** | ✅ **every call** | The only path to a write, and the route for user-supplied SQL. |
+
+And because the guard re-runs **after** approval, an approved-then-replayed step can't slip past validation — approval settles *intent*, the guard settles *safety*.
 
 ---
 
@@ -290,16 +350,6 @@ scripts/seed.mjs                 # 🌱 deterministic mock data
 **Why the model still drafts the SQL.** The model is good at intent → SQL and bad at self-restraint. So it drafts; deterministic code decides.
 
 **Where it's deliberately strict.** Unknown identifiers are rejected rather than passed through, so a hallucinated column fails fast with the schema attached instead of producing a confusing Postgres error.
-
----
-
-## ☁️ Deploy
-
-```bash
-eve deploy
-```
-
-Links a Vercel project if needed and deploys to production. Set `SUPABASE_URL` and `GOOGLE_GENERATIVE_AI_API_KEY` in the project's environment variables. See the [eve deployment docs](https://eve.dev/docs/guides/deployment/vercel).
 
 ---
 
