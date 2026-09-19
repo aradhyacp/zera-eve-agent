@@ -1,5 +1,7 @@
+import { google } from "@ai-sdk/google";
 import { defineAgent } from "eve";
 
 export default defineAgent({
-  model: "openai/gpt-5.6-luna-fast",
+  model: google("gemini-3.5-flash-lite"),
+  defaultTools: false,
 });
